@@ -20,13 +20,13 @@ class DataConfig:
     
     # Raw data paths
     RAW_DIR: Path = DATA_DIR / "raw"
-    MASK_DIR: Path = RAW_DIR / "mask"
-    MASK_LEFT_DIR: Path = RAW_DIR / "mask_left"
+    MASK_DIR: Path = RAW_DIR / "train" / "mask"
+    MASK_LEFT_DIR: Path = RAW_DIR / "train" / "mask_left"
     
     # CSV file paths
-    HWG_METADATA_PATH: Path = RAW_DIR / "hwg_metadata.csv"
-    MEASUREMENTS_PATH: Path = RAW_DIR / "measurements.csv"
-    SUBJECT_PHOTO_MAP_PATH: Path = RAW_DIR / "subject_to_photo_map.csv"
+    HWG_METADATA_PATH: Path = RAW_DIR / "train" / "hwg_metadata.csv"
+    MEASUREMENTS_PATH: Path = RAW_DIR / "train" / "measurements.csv"
+    SUBJECT_PHOTO_MAP_PATH: Path = RAW_DIR / "train" / "subject_to_photo_map.csv"
     
     # Processed data paths
     INTERIM_DIR: Path = DATA_DIR / "interim"
@@ -106,8 +106,8 @@ class TrainingConfig:
     STRATIFY_BY: str = "gender"
     
     # Batch processing
-    BATCH_SIZE: int = 32
-    NUM_WORKERS: int = 4
+    BATCH_SIZE: int = 8
+    NUM_WORKERS: int = 1
 
 
 @dataclass

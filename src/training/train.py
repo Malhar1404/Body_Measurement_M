@@ -1,5 +1,5 @@
 """
-train_advanced.py - Advanced Training with Dynamic Control
+train_advanced.py - Advanced Training with Dynamic Control and Comprehensive Logging
 
 Features:
 - Resume training from any checkpoint
@@ -7,6 +7,8 @@ Features:
 - Fine-tuning strategies (freeze/unfreeze layers)
 - Dynamic learning rate adjustment
 - Layer-wise learning rates
+- Real-time Excel and graph generation
+- Per-measurement error tracking
 """
 
 import torch
@@ -16,10 +18,12 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import time
 from tqdm import tqdm
+import numpy as np
 
 from src.config.config import Config
 from src.models.body_measurement_model import create_model
 from src.models.dataset import create_dataloaders
+from src.utils.logger import TrainingLogger
 
 
 class AdvancedTrainer:
@@ -66,11 +70,15 @@ class AdvancedTrainer:
         self.log_dir = Path('logs')
         self.log_dir.mkdir(exist_ok=True)
         
-        # Save training config
-        self.training_config_path = self.checkpoint_dir / 'training_config.json'
+        # Initialize custom logger
+        experiment_name = f"bmnet_{time.strftime('%Y%m%d_%H%M%S')}"
+        self.logger = TrainingLogger(
+            log_dir=self.log_dir,
+            experiment_name=experiment_name
+        )
         
         # TensorBoard writer
-        self.writer = SummaryWriter(self.log_dir)
+        self.writer = SummaryWriter(self.log_dir / experiment_name / 'tensorboard')
         
         # Training state
         self.best_val_loss = float('inf')
@@ -311,7 +319,7 @@ class AdvancedTrainer:
         running_loss = 0.0
         running_mae = 0.0
         
-        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch} [Train]")
+        pbar = tqdm(self.train_loader, desc=f"Epoch {epoch+1} [Train]")
         
         for batch_idx, batch in enumerate(pbar):
             mask = batch['mask'].to(self.device)
@@ -351,13 +359,16 @@ class AdvancedTrainer:
         return epoch_loss, epoch_mae
     
     def validate(self, epoch: int) -> tuple:
-        """Validate the model."""
+        """Validate the model and calculate per-measurement MAE."""
         self.model.eval()
         running_loss = 0.0
         running_mae = 0.0
         
+        all_predictions = []
+        all_targets = []
+        
         with torch.no_grad():
-            pbar = tqdm(self.val_loader, desc=f"Epoch {epoch} [Val]")
+            pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
             
             for batch in pbar:
                 mask = batch['mask'].to(self.device)
@@ -373,6 +384,10 @@ class AdvancedTrainer:
                 running_loss += loss.item()
                 running_mae += mae.item()
                 
+                # Store for per-measurement analysis
+                all_predictions.append(outputs.cpu().numpy())
+                all_targets.append(targets.cpu().numpy())
+                
                 pbar.set_postfix({
                     'loss': f'{loss.item():.4f}',
                     'mae': f'{mae.item():.4f}'
@@ -381,7 +396,17 @@ class AdvancedTrainer:
         epoch_loss = running_loss / len(self.val_loader)
         epoch_mae = running_mae / len(self.val_loader)
         
-        return epoch_loss, epoch_mae
+        # Calculate per-measurement MAE
+        all_predictions = np.vstack(all_predictions)
+        all_targets = np.vstack(all_targets)
+        per_measurement_mae = np.abs(all_predictions - all_targets).mean(axis=0)
+        
+        per_measurement_dict = {
+            name: float(mae) for name, mae in 
+            zip(self.config.measurement.MEASUREMENT_COLUMNS, per_measurement_mae)
+        }
+        
+        return epoch_loss, epoch_mae, per_measurement_dict
     
     def train(self, num_epochs: int = 50, 
               freeze_strategy: str = None,
@@ -400,6 +425,7 @@ class AdvancedTrainer:
         print(f"Epochs: {num_epochs}")
         print(f"Starting from epoch: {self.start_epoch}")
         print(f"Device: {self.device}")
+        print(f"Batch size: {self.config.training.BATCH_SIZE}")
         
         if freeze_strategy:
             print(f"Strategy: {freeze_strategy}")
@@ -430,7 +456,7 @@ class AdvancedTrainer:
             train_loss, train_mae = self.train_epoch(epoch)
             
             # Validate
-            val_loss, val_mae = self.validate(epoch)
+            val_loss, val_mae, per_measurement_mae = self.validate(epoch)
             
             # Update learning rate
             self.scheduler.step(val_loss)
@@ -451,6 +477,17 @@ class AdvancedTrainer:
             self.writer.add_scalar('Epoch/Learning_Rate', 
                                   self.optimizer.param_groups[0]['lr'], epoch)
             
+            # Log to custom logger (Excel + Plots)
+            self.logger.log_epoch(
+                epoch=epoch,
+                train_loss=train_loss,
+                train_mae=train_mae,
+                val_loss=val_loss,
+                val_mae=val_mae,
+                learning_rate=self.optimizer.param_groups[0]['lr'],
+                per_measurement_mae=per_measurement_mae
+            )
+            
             # Print summary
             print(f"\n📊 Epoch {epoch+1} Summary:")
             print(f"  Train Loss: {train_loss:.4f} | Train MAE: {train_mae:.4f}")
@@ -470,11 +507,21 @@ class AdvancedTrainer:
                 break
         
         total_time = time.time() - start_time
+        
+        # Generate final plots and reports
+        print("\n📊 Generating final plots and reports...")
+        self.logger.plot_per_measurement_mae(self.config.measurement.MEASUREMENT_COLUMNS)
+        self.logger.export_summary_report()
+        
         print("\n" + "="*80)
         print("✅ TRAINING COMPLETE!")
         print("="*80)
         print(f"Total time: {total_time/3600:.2f} hours")
         print(f"Best val loss: {self.best_val_loss:.4f}")
+        print(f"Logs saved to: {self.logger.log_dir}")
+        print(f"  - Excel: {self.logger.data_dir / 'training_history.xlsx'}")
+        print(f"  - Plots: {self.logger.plots_dir}")
+        print(f"  - Report: {self.logger.data_dir / 'training_report.txt'}")
         print("="*80 + "\n")
         
         self.writer.close()

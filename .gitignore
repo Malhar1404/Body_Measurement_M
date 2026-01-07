@@ -1,3 +1,4 @@
+
 ##################################
 # PYTHON
 ##################################
@@ -24,10 +25,10 @@ ENV/
 ##################################
 # DATA (DO NOT VERSION LARGE FILES)
 ##################################
-# data/raw/*
-# data/interim/*
-# data/processed/*
-# data/validation/*
+data/raw/*
+data/interim/*
+data/processed/*
+data/validation/*
 
 # Keep directory structure
 !data/raw/.gitkeep

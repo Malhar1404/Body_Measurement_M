@@ -276,7 +276,8 @@ class AdvancedTrainer:
 def main():
     config = Config()
     trainer = AdvancedTrainer(config)
-
+    
+    # Increase weight decay (stronger L2 regularization)
     trainer._create_optimizer(learning_rate=1e-4, weight_decay=1e-3)
     trainer.train(num_epochs=100, freeze_strategy="freeze_backbone", unfreeze_at_epoch=50)
 

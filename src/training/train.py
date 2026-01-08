@@ -324,83 +324,83 @@ class AdvancedTrainer:
 
         self.writer.close()
         
-        def resume_with_unfrozen_backbone(self, checkpoint_path: str):
-            """
-            Resume training from checkpoint with unfrozen backbone.
-            Uses very low learning rates to prevent destroying pretrained features.
-            
-            Args:
-                checkpoint_path: Path to best checkpoint
-            """
-            print("\n" + "="*80)
-            print("RESUMING WITH UNFROZEN BACKBONE")
-            print("="*80)
-            
-            # Load the best checkpoint
-            print(f"\n📂 Loading checkpoint: {checkpoint_path}")
-            checkpoint = torch.load(checkpoint_path, map_location=self.device)
-            
-            # Load model state
-            self.model.load_state_dict(checkpoint['model_state_dict'])
-            
-            # Get the epoch we're resuming from
-            self.start_epoch = checkpoint['epoch'] + 1
-            self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
-            self.global_step = checkpoint.get('global_step', 0)
-            
-            print(f"✓ Loaded model from epoch {checkpoint['epoch']}")
-            print(f"✓ Best val loss: {self.best_val_loss:.4f}")
-            
-            # Unfreeze all layers
-            print("\n🔓 Unfreezing all layers...")
-            for param in self.model.parameters():
-                param.requires_grad = True
-            
-            # Create layer-wise optimizer with different learning rates
-            print("\n🎯 Creating layer-wise optimizer...")
-            backbone_params = []
-            fusion_params = []
-            head_params = []
-            
-            for name, param in self.model.named_parameters():
-                if 'backbone' in name:
-                    backbone_params.append(param)
-                elif 'fusion' in name:
-                    fusion_params.append(param)
-                else:
-                    head_params.append(param)
-            
-            # Very conservative learning rates for fine-tuning
-            self.optimizer = optim.Adam([
-                {'params': backbone_params, 'lr': 1e-6, 'name': 'backbone'},
-                {'params': fusion_params, 'lr': 5e-5, 'name': 'fusion'},
-                {'params': head_params, 'lr': 5e-5, 'name': 'head'}
-            ], weight_decay=1e-3)
-            
-            print("✓ Learning rates set:")
-            print(f"  Backbone: 1e-6 (very low - careful fine-tuning)")
-            print(f"  Fusion:   5e-5")
-            print(f"  Head:     5e-5")
-            
-            # Create scheduler with higher patience for fine-tuning
-            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer,
-                mode='min',
-                factor=0.5,
-                patience=10,
-                verbose=True
-            )
-            
-            # Reset early stopper with higher patience
-            self.early_stopper = EarlyStopper(patience=20, min_delta=0.0005)
-            print("✓ Early stopping: patience=20, min_delta=0.0005")
-            
-            # Print parameter info
-            self._print_parameter_info()
-            
-            print("\n" + "="*80)
-            print("Ready to resume training with unfrozen backbone!")
-            print("="*80 + "\n")
+    def resume_with_unfrozen_backbone(self, checkpoint_path: str):
+        """
+        Resume training from checkpoint with unfrozen backbone.
+        Uses very low learning rates to prevent destroying pretrained features.
+        
+        Args:
+            checkpoint_path: Path to best checkpoint
+        """
+        print("\n" + "="*80)
+        print("RESUMING WITH UNFROZEN BACKBONE")
+        print("="*80)
+        
+        # Load the best checkpoint
+        print(f"\n📂 Loading checkpoint: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # Load model state
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Get the epoch we're resuming from
+        self.start_epoch = checkpoint['epoch'] + 1
+        self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        self.global_step = checkpoint.get('global_step', 0)
+        
+        print(f"✓ Loaded model from epoch {checkpoint['epoch']}")
+        print(f"✓ Best val loss: {self.best_val_loss:.4f}")
+        
+        # Unfreeze all layers
+        print("\n🔓 Unfreezing all layers...")
+        for param in self.model.parameters():
+            param.requires_grad = True
+        
+        # Create layer-wise optimizer with different learning rates
+        print("\n🎯 Creating layer-wise optimizer...")
+        backbone_params = []
+        fusion_params = []
+        head_params = []
+        
+        for name, param in self.model.named_parameters():
+            if 'backbone' in name:
+                backbone_params.append(param)
+            elif 'fusion' in name:
+                fusion_params.append(param)
+            else:
+                head_params.append(param)
+        
+        # Very conservative learning rates for fine-tuning
+        self.optimizer = optim.Adam([
+            {'params': backbone_params, 'lr': 1e-6, 'name': 'backbone'},
+            {'params': fusion_params, 'lr': 5e-5, 'name': 'fusion'},
+            {'params': head_params, 'lr': 5e-5, 'name': 'head'}
+        ], weight_decay=1e-3)
+        
+        print("✓ Learning rates set:")
+        print(f"  Backbone: 1e-6 (very low - careful fine-tuning)")
+        print(f"  Fusion:   5e-5")
+        print(f"  Head:     5e-5")
+        
+        # Create scheduler with higher patience for fine-tuning
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer,
+            mode='min',
+            factor=0.5,
+            patience=10,
+            verbose=True
+        )
+        
+        # Reset early stopper with higher patience
+        self.early_stopper = EarlyStopper(patience=20, min_delta=0.0005)
+        print("✓ Early stopping: patience=20, min_delta=0.0005")
+        
+        # Print parameter info
+        self._print_parameter_info()
+        
+        print("\n" + "="*80)
+        print("Ready to resume training with unfrozen backbone!")
+        print("="*80 + "\n")
 
 
 

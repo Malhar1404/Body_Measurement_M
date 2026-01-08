@@ -1,15 +1,17 @@
 """
-train_advanced.py - Advanced Training with Dynamic Control and Comprehensive Logging
+train_advanced.py - Advanced Training with Full TensorBoard Monitoring
 """
 
+import time
+from pathlib import Path
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-from pathlib import Path
-import time
 from tqdm import tqdm
-import numpy as np
+import matplotlib.pyplot as plt
 
 from src.config.config import Config
 from src.models.body_measurement_model import create_model
@@ -46,7 +48,9 @@ class AdvancedTrainer:
         print(f"🚀 Using device: {self.device}")
 
         # Model
-        self.model = create_model(config, model_type="resnet50", pretrained=True).to(self.device)
+        self.model = create_model(
+            config, model_type="resnet50", pretrained=True
+        ).to(self.device)
         self._print_parameter_info()
 
         # Data
@@ -55,7 +59,7 @@ class AdvancedTrainer:
         # Loss
         self.criterion = nn.MSELoss()
 
-        # Tracking hyperparams
+        # Hyperparams tracking
         self.initial_lr = None
         self.weight_decay = None
         self.freeze_strategy = "none"
@@ -65,7 +69,7 @@ class AdvancedTrainer:
         self.scheduler = None
         self._create_optimizer()
 
-        # Logging
+        # Logging dirs
         self.checkpoint_dir = Path("checkpoints")
         self.checkpoint_dir.mkdir(exist_ok=True)
 
@@ -74,7 +78,7 @@ class AdvancedTrainer:
 
         self.experiment_name = f"bmnet_{time.strftime('%Y%m%d_%H%M%S')}"
         self.logger = TrainingLogger(self.log_dir, self.experiment_name)
-        self.writer = SummaryWriter(self.log_dir / self.experiment_name / "tensorboard")
+        self.writer = SummaryWriter(self.log_dir / self.experiment_name)
 
         # Training state
         self.best_val_loss = float("inf")
@@ -125,12 +129,43 @@ class AdvancedTrainer:
         self._create_optimizer()
 
     # =========================
+    # TensorBoard Helpers
+    # =========================
+    def _log_gradients(self, epoch):
+        total_norm = 0.0
+        for p in self.model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** 0.5
+        self.writer.add_scalar("Gradients/TotalNorm", total_norm, epoch)
+
+    def _log_weights(self, epoch):
+        for name, param in self.model.named_parameters():
+            self.writer.add_histogram(f"Weights/{name}", param.data.cpu(), epoch)
+            if param.grad is not None:
+                self.writer.add_histogram(
+                    f"Gradients/{name}", param.grad.cpu(), epoch
+                )
+
+    def _log_scatter(self, preds, gts, epoch):
+        fig = plt.figure(figsize=(5, 5))
+        plt.scatter(gts.flatten(), preds.flatten(), alpha=0.3)
+        min_v = min(gts.min(), preds.min())
+        max_v = max(gts.max(), preds.max())
+        plt.plot([min_v, max_v], [min_v, max_v], "r--")
+        plt.xlabel("Ground Truth")
+        plt.ylabel("Predictions")
+        plt.title("Predicted vs Ground Truth")
+        self.writer.add_figure("Pred_vs_GT", fig, epoch)
+        plt.close(fig)
+
+    # =========================
     # Checkpoint Naming
     # =========================
     def _best_model_filename(self, epoch, val_loss):
         lr = self.optimizer.param_groups[0]["lr"]
         ts = time.strftime("%Y%m%d_%H%M%S")
-
         return (
             f"best_epoch={epoch}"
             f"_valloss={val_loss:.4f}"
@@ -152,18 +187,12 @@ class AdvancedTrainer:
             "best_val_loss": self.best_val_loss,
             "global_step": self.global_step,
             "training_history": self.training_history,
-            "hyperparameters": {
-                "lr": self.initial_lr,
-                "weight_decay": self.weight_decay,
-                "freeze_strategy": self.freeze_strategy,
-            },
         }
 
         torch.save(checkpoint, self.checkpoint_dir / "last_checkpoint.pth")
 
         if is_best:
-            filename = self._best_model_filename(epoch, val_loss)
-            path = self.checkpoint_dir / filename
+            path = self.checkpoint_dir / self._best_model_filename(epoch, val_loss)
             torch.save(checkpoint, path)
             print(f"🏆 Best model saved → {path.name}")
 
@@ -183,10 +212,11 @@ class AdvancedTrainer:
     # =========================
     def train_epoch(self, epoch):
         self.model.train()
-        loss_sum, mae_sum = 0, 0
+        loss_sum, mae_sum = 0.0, 0.0
 
         for batch in tqdm(self.train_loader, desc=f"Epoch {epoch+1} [Train]"):
             self.optimizer.zero_grad()
+
             outputs = self.model(
                 batch["mask"].to(self.device),
                 batch["mask_left"].to(self.device),
@@ -200,6 +230,11 @@ class AdvancedTrainer:
             self.optimizer.step()
 
             mae = torch.abs(outputs - targets).mean()
+
+            self.writer.add_scalar(
+                "Loss/Train_step", loss.item(), self.global_step
+            )
+
             loss_sum += loss.item()
             mae_sum += mae.item()
             self.global_step += 1
@@ -208,7 +243,7 @@ class AdvancedTrainer:
 
     def validate(self, epoch):
         self.model.eval()
-        loss_sum, mae_sum = 0, 0
+        loss_sum, mae_sum = 0.0, 0.0
         preds, gts = [], []
 
         with torch.no_grad():
@@ -228,7 +263,12 @@ class AdvancedTrainer:
                 preds.append(outputs.cpu().numpy())
                 gts.append(targets.cpu().numpy())
 
-        return loss_sum / len(self.val_loader), mae_sum / len(self.val_loader)
+        return (
+            loss_sum / len(self.val_loader),
+            mae_sum / len(self.val_loader),
+            np.concatenate(preds),
+            np.concatenate(gts),
+        )
 
     # =========================
     # Training Loop
@@ -244,13 +284,29 @@ class AdvancedTrainer:
                 self.unfreeze_backbone()
 
             train_loss, train_mae = self.train_epoch(epoch)
-            val_loss, val_mae = self.validate(epoch)
+            val_loss, val_mae, preds, gts = self.validate(epoch)
 
             self.scheduler.step(val_loss)
 
-            self.training_history.append(
-                dict(epoch=epoch, train_loss=train_loss, val_loss=val_loss)
+            # Scalars
+            self.writer.add_scalar("Loss/Train", train_loss, epoch)
+            self.writer.add_scalar("Loss/Val", val_loss, epoch)
+            self.writer.add_scalar("MAE/Train", train_mae, epoch)
+            self.writer.add_scalar("MAE/Val", val_mae, epoch)
+            self.writer.add_scalar(
+                "LR", self.optimizer.param_groups[0]["lr"], epoch
             )
+
+            # Distributions
+            self.writer.add_histogram("Predictions", preds, epoch)
+            self.writer.add_histogram("GroundTruth", gts, epoch)
+            self.writer.add_histogram("Error", preds - gts, epoch)
+
+            # Advanced diagnostics
+            self._log_gradients(epoch)
+            if epoch % 10 == 0:
+                self._log_weights(epoch)
+            self._log_scatter(preds, gts, epoch)
 
             is_best = val_loss < self.best_val_loss
             if is_best:
@@ -259,8 +315,7 @@ class AdvancedTrainer:
             self.save_checkpoint(epoch, val_loss, is_best)
 
             print(
-                f"Epoch {epoch+1} | "
-                f"Train: {train_loss:.4f} | Val: {val_loss:.4f}"
+                f"Epoch {epoch+1} | Train {train_loss:.4f} | Val {val_loss:.4f}"
             )
 
             if self.early_stopper.early_stop(val_loss):
@@ -278,7 +333,11 @@ def main():
     trainer = AdvancedTrainer(config)
 
     trainer._create_optimizer(learning_rate=1e-4, weight_decay=1e-3)
-    trainer.train(num_epochs=100, freeze_strategy="freeze_backbone", unfreeze_at_epoch=50)
+    trainer.train(
+        num_epochs=100,
+        freeze_strategy="freeze_backbone",
+        unfreeze_at_epoch=50,
+    )
 
 
 if __name__ == "__main__":

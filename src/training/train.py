@@ -25,7 +25,26 @@ from src.models.body_measurement_model import create_model
 from src.models.dataset import create_dataloaders
 from src.utils.logger import TrainingLogger
 
-
+class EarlyStopper:
+    """Early stopping to prevent overfitting."""
+    
+    def __init__(self, patience=15, min_delta=0.001):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = float('inf')
+        
+    def early_stop(self, val_loss):
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            return False
+        else:
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+            return False
+        
 class AdvancedTrainer:
     """
     Advanced trainer with dynamic control and fine-tuning capabilities.
@@ -85,7 +104,7 @@ class AdvancedTrainer:
         self.start_epoch = 0
         self.global_step = 0
         self.training_history = []
-        
+        self.early_stopper = EarlyStopper(patience=15, min_delta=0.001)
         # Resume from checkpoint if provided
         if resume_from:
             self.load_checkpoint(resume_from)
@@ -460,7 +479,10 @@ class AdvancedTrainer:
             
             # Update learning rate
             self.scheduler.step(val_loss)
-            
+            if self.early_stopper.early_stop(val_loss):
+                print(f"\n⚠️ Early stopping triggered at epoch {epoch+1}")
+                print(f"Best val loss: {self.early_stopper.best_loss:.4f}")
+                break
             # Save to history
             self.training_history.append({
                 'epoch': epoch,
@@ -532,18 +554,22 @@ def main():
     config = Config()
     
     # Example 1: Train from scratch with frozen backbone
-    # trainer = AdvancedTrainer(config)
-    # trainer.train(num_epochs=50, 
-    #              freeze_strategy='freeze_backbone',
-    #              unfreeze_at_epoch=20)
+    # Load best checkpoint
+    trainer = AdvancedTrainer(config, resume_from='checkpoints/best_model.pth')
+    
+    # Increase weight decay (stronger L2 regularization)
+    trainer._create_optimizer(learning_rate=1e-4, weight_decay=1e-3)
+    
+    # Train with delayed unfreezing
+    trainer.train(num_epochs=100, freeze_strategy='freeze_backbone', unfreeze_at_epoch=50)
     
     # Example 2: Resume training from checkpoint
     # trainer = AdvancedTrainer(config, resume_from='checkpoints/last_checkpoint.pth')
     # trainer.train(num_epochs=50)
     
     # Example 3: Start fresh training
-    trainer = AdvancedTrainer(config)
-    trainer.train(num_epochs=50)
+    # trainer = AdvancedTrainer(config)
+    # trainer.train(num_epochs=50)
 
 
 if __name__ == "__main__":

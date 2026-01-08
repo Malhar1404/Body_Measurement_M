@@ -62,14 +62,19 @@ class BodyMeasurementModel(nn.Module):
         self.fusion = nn.Sequential(
             nn.Linear(fusion_input_dim, 1024),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             nn.Linear(1024, 512),
             nn.ReLU(),
-            nn.Dropout(0.3)
+            nn.Dropout(0.4)
         )
         
         # Final regression head
-        self.regression_head = nn.Linear(512, self.num_measurements)
+        self.regression_head = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, self.num_measurements)
+        )
         
         # Initialize weights
         self._initialize_weights()
@@ -83,8 +88,11 @@ class BodyMeasurementModel(nn.Module):
                     nn.init.constant_(m.bias, 0)
         
         # Initialize regression head with smaller weights
-        nn.init.normal_(self.regression_head.weight, mean=0, std=0.01)
-        nn.init.constant_(self.regression_head.bias, 0)
+        for m in self.regression_head.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, mean=0, std=0.01)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
     
     def forward(self, mask: torch.Tensor, mask_left: torch.Tensor, 
                 height: torch.Tensor) -> torch.Tensor:

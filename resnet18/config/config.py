@@ -35,7 +35,7 @@ class PathConfig:
     
     # Data directories
     DATA_DIR: Path = PROJECT_ROOT / "data"
-    TRAIN_DIR: Path = DATA_DIR / "train"
+    TRAIN_DIR: Path = DATA_DIR / "raw" / "train"
     PROCESSED_DIR: Path = DATA_DIR / "processed_resnet18"
     
     # Image directories

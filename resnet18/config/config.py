@@ -39,9 +39,9 @@ class PathConfig:
     PROCESSED_DIR: Path = DATA_DIR / "processed_resnet18"
     
     # Image directories
-    MASK_DIR: Path = TRAIN_DIR / "mask"
-    MASK_LEFT_DIR: Path = TRAIN_DIR / "mask_left"
-    
+    MASK_DIR: Path = TRAIN_DIR / 'mask'
+    MASK_LEFT_DIR: Path = TRAIN_DIR / 'mask_left'
+
     # CSV files
     MEASUREMENTS_CSV: Path = TRAIN_DIR / "measurements.csv"
     METADATA_CSV: Path = TRAIN_DIR / "hwg_metadata.csv"

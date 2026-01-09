@@ -129,18 +129,23 @@ class HipBustPredictor:
         mask_img = self.image_preprocessor.transform(str(mask_path))
         mask_left_img = self.image_preprocessor.transform(str(mask_left_path))
         
-        # To tensors
+        # To tensors (B, C, H, W)
         mask_tensor = torch.from_numpy(mask_img).permute(2, 0, 1).unsqueeze(0).float()
         mask_left_tensor = torch.from_numpy(mask_left_img).permute(2, 0, 1).unsqueeze(0).float()
         
-        # Normalize height
+        # Normalize height and create tensor (B, 1) - FIXED!
         height_normalized = self.measurement_preprocessor.transform_height(height_cm)
-        height_tensor = torch.tensor([[height_normalized]], dtype=torch.float32)
+        height_tensor = torch.tensor([[height_normalized]], dtype=torch.float32)  # Shape: (1, 1)
         
         # Move to device
         mask_tensor = mask_tensor.to(self.device)
         mask_left_tensor = mask_left_tensor.to(self.device)
         height_tensor = height_tensor.to(self.device)
+        
+        # Debug: Print shapes
+        # print(f"Mask shape: {mask_tensor.shape}")  # Should be (1, 1, 224, 224)
+        # print(f"Mask left shape: {mask_left_tensor.shape}")  # Should be (1, 1, 224, 224)
+        # print(f"Height shape: {height_tensor.shape}")  # Should be (1, 1)
         
         # Predict
         predictions = self.model(mask_tensor, mask_left_tensor, height_tensor)
@@ -154,7 +159,7 @@ class HipBustPredictor:
             'hip_predicted': float(predictions_cm[0]),
             'bust_predicted': float(predictions_cm[1])
         }
-    
+
     @torch.no_grad()
     def predict_batch(self, data: pd.DataFrame) -> pd.DataFrame:
         """Predict for batch with ground truth comparison."""

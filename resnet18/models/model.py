@@ -61,11 +61,11 @@ class HipBustModel(nn.Module):
             nn.Linear(feature_dim * 2, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(0.3)
         )
         
         # Regression head
@@ -76,7 +76,7 @@ class HipBustModel(nn.Module):
         self.regression_head = nn.Sequential(
             nn.Linear(input_features, 128),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 2)  # Only 2 outputs: hip, bust

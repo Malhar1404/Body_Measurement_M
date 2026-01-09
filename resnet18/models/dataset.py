@@ -1,165 +1,166 @@
 """
-dataset.py - PyTorch Dataset for Hip & Bust prediction
-
-Handles 1-channel grayscale silhouettes.
+dataset.py - Dataset with Strong Augmentation
 """
 
 import torch
 from torch.utils.data import Dataset, DataLoader
-import pandas as pd
 import numpy as np
+import cv2
 from pathlib import Path
-from typing import Dict
+import pandas as pd
 import albumentations as A
-
-import sys
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from resnet18.config.config import Config
+from albumentations.pytorch import ToTensorV2
 
 
-class HipBustDataset(Dataset):
-    """
-    Dataset for hip and bust prediction.
-    """
+class BodyMeasurementDataset(Dataset):
+    """Dataset with augmentation for body measurement prediction."""
     
     def __init__(
-        self,
-        dataframe: pd.DataFrame,
+        self, 
+        dataframe,
         image_preprocessor,
         measurement_preprocessor,
-        config: Config,
-        augment: bool = False
+        image_dir,
+        is_training=True
     ):
         self.df = dataframe.reset_index(drop=True)
         self.image_preprocessor = image_preprocessor
         self.measurement_preprocessor = measurement_preprocessor
-        self.config = config
-        self.augment = augment
+        self.image_dir = Path(image_dir)
+        self.is_training = is_training
         
-        self.measurement_cols = config.measurement.MEASUREMENT_COLUMNS
-        self.mask_dir = config.paths.MASK_DIR
-        self.mask_left_dir = config.paths.MASK_LEFT_DIR
-        
-        # Augmentation pipeline for grayscale
-        if self.augment:
-            self.augment_transform = A.Compose([
-                A.HorizontalFlip(p=0.5),
+        # ===== AUGMENTATION FOR TRAINING =====
+        if is_training:
+            self.transform = A.Compose([
+                # Geometric augmentations
                 A.ShiftScaleRotate(
-                    shift_limit=0.05,
-                    scale_limit=0.1,
-                    rotate_limit=5,
-                    border_mode=0,
-                    p=0.5
+                    shift_limit=0.05,      # 5% shift
+                    scale_limit=0.1,       # ±10% scale
+                    rotate_limit=10,       # ±10 degrees
+                    border_mode=cv2.BORDER_CONSTANT,
+                    value=0,
+                    p=0.7
                 ),
-                A.RandomBrightnessContrast(
-                    brightness_limit=0.1,
-                    contrast_limit=0.1,
+                A.HorizontalFlip(p=0.5),   # 50% flip (body symmetry)
+                
+                # Perspective & distortion
+                A.ElasticTransform(
+                    alpha=30,
+                    sigma=5,
+                    alpha_affine=5,
                     p=0.3
                 ),
-                A.GaussNoise(var_limit=(5.0, 15.0), p=0.2),
-            ])
-            print(f"✓ Augmentation enabled")
+                A.GridDistortion(
+                    num_steps=5,
+                    distort_limit=0.1,
+                    p=0.3
+                ),
+                
+                # Pixel-level augmentations
+                A.RandomBrightnessContrast(
+                    brightness_limit=0.2,
+                    contrast_limit=0.2,
+                    p=0.5
+                ),
+                A.GaussNoise(var_limit=(5.0, 20.0), p=0.3),
+                A.GaussianBlur(blur_limit=(3, 5), p=0.3),
+                
+                # Cutout (mask random regions)
+                A.CoarseDropout(
+                    max_holes=8,
+                    max_height=16,
+                    max_width=16,
+                    min_holes=4,
+                    min_height=8,
+                    min_width=8,
+                    fill_value=0,
+                    p=0.3
+                ),
+            ], p=1.0)
+        else:
+            # No augmentation for validation
+            self.transform = None
     
     def __len__(self):
         return len(self.df)
     
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+    def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        photo_id = row['photo_id']
         
         # Load images
-        mask_path = self.mask_dir / f"{photo_id}.png"
-        mask_left_path = self.mask_left_dir / f"{photo_id}.png"
+        mask_path = self.image_dir / row['mask_path']
+        mask_left_path = self.image_dir / row['mask_left_path']
         
-        try:
-            # Transform images (returns H, W, 1)
-            mask_img = self.image_preprocessor.transform(mask_path)
-            mask_left_img = self.image_preprocessor.transform(mask_left_path)
-            
-            # Apply augmentation if enabled
-            if self.augment:
-                # Denormalize for augmentation
-                mask_img_uint8 = ((mask_img * self.image_preprocessor.std + self.image_preprocessor.mean) * 255).astype(np.uint8)
-                mask_left_img_uint8 = ((mask_left_img * self.image_preprocessor.std + self.image_preprocessor.mean) * 255).astype(np.uint8)
-                
-                # Apply augmentation
-                augmented_mask = self.augment_transform(image=mask_img_uint8)['image']
-                augmented_left = self.augment_transform(image=mask_left_img_uint8)['image']
-                
-                # Re-normalize
-                mask_img = (augmented_mask.astype(np.float32) / 255.0 - self.image_preprocessor.mean) / self.image_preprocessor.std
-                mask_left_img = (augmented_left.astype(np.float32) / 255.0 - self.image_preprocessor.mean) / self.image_preprocessor.std
-            
-            # Convert to tensors (1, H, W)
-            mask_tensor = torch.from_numpy(mask_img).permute(2, 0, 1).float()
-            mask_left_tensor = torch.from_numpy(mask_left_img).permute(2, 0, 1).float()
-            
-        except Exception as e:
-            print(f"Error loading {photo_id}: {e}")
-            # Fallback: zeros
-            mask_tensor = torch.zeros(1, self.config.image.TARGET_HEIGHT, 
-                                     self.config.image.TARGET_WIDTH)
-            mask_left_tensor = torch.zeros(1, self.config.image.TARGET_HEIGHT,
-                                          self.config.image.TARGET_WIDTH)
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        mask_left = cv2.imread(str(mask_left_path), cv2.IMREAD_GRAYSCALE)
         
-        # Get height
-        height = row['height_cm']
-        height_normalized = self.measurement_preprocessor.transform_height(height)
-        height_tensor = torch.tensor(height_normalized, dtype=torch.float32)
+        if mask is None or mask_left is None:
+            raise FileNotFoundError(f"Image not found: {mask_path} or {mask_left_path}")
         
-        # Get measurements (only hip and bust)
-        measurements = row[self.measurement_cols].values.astype(np.float32)
-        measurements_normalized = self.measurement_preprocessor.transform(measurements)
-        measurements_tensor = torch.from_numpy(measurements_normalized).float()
+        # Apply augmentation (training only)
+        if self.transform is not None:
+            # Apply same transform to both images
+            transformed = self.transform(image=mask)
+            mask = transformed['image']
+            
+            transformed_left = self.transform(image=mask_left)
+            mask_left = transformed_left['image']
+        
+        # Resize
+        target_size = (224, 224)
+        mask = cv2.resize(mask, target_size)
+        mask_left = cv2.resize(mask_left, target_size)
+        
+        # Normalize to [0, 1]
+        mask = mask.astype(np.float32) / 255.0
+        mask_left = mask_left.astype(np.float32) / 255.0
+        
+        # Add channel dimension
+        mask = np.expand_dims(mask, axis=0)
+        mask_left = np.expand_dims(mask_left, axis=0)
+        
+        # Convert to tensors
+        mask = torch.from_numpy(mask)
+        mask_left = torch.from_numpy(mask_left)
+        
+        # Get measurements
+        height = torch.tensor([row['height']], dtype=torch.float32)
+        measurements = torch.tensor([row['hip'], row['bust']], dtype=torch.float32)
         
         return {
-            'mask': mask_tensor,
-            'mask_left': mask_left_tensor,
-            'height': height_tensor,
-            'measurements': measurements_tensor,
-            'photo_id': photo_id
+            'mask': mask,
+            'mask_left': mask_left,
+            'height': height,
+            'measurements': measurements
         }
 
 
-def create_dataloaders(config: Config, image_preprocessor, measurement_preprocessor,
-                       train_df: pd.DataFrame, val_df: pd.DataFrame):
-    """
-    Create train and validation dataloaders.
+def create_dataloaders(config, image_preprocessor, measurement_preprocessor, train_df, val_df):
+    """Create train and validation dataloaders with augmentation."""
     
-    Args:
-        config: Configuration
-        image_preprocessor: Fitted image preprocessor
-        measurement_preprocessor: Fitted measurement preprocessor
-        train_df: Training dataframe
-        val_df: Validation dataframe
-    
-    Returns:
-        train_loader, val_loader
-    """
-    # Create datasets
-    train_dataset = HipBustDataset(
-        train_df,
-        image_preprocessor,
-        measurement_preprocessor,
-        config,
-        augment=config.training.USE_AUGMENTATION
+    train_dataset = BodyMeasurementDataset(
+        dataframe=train_df,
+        image_preprocessor=image_preprocessor,
+        measurement_preprocessor=measurement_preprocessor,
+        image_dir=config.paths.PROCESSED_DIR / 'masks',
+        is_training=True  # Enable augmentation
     )
     
-    val_dataset = HipBustDataset(
-        val_df,
-        image_preprocessor,
-        measurement_preprocessor,
-        config,
-        augment=False
+    val_dataset = BodyMeasurementDataset(
+        dataframe=val_df,
+        image_preprocessor=image_preprocessor,
+        measurement_preprocessor=measurement_preprocessor,
+        image_dir=config.paths.PROCESSED_DIR / 'masks',
+        is_training=False  # No augmentation
     )
     
-    # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.training.BATCH_SIZE,
         shuffle=True,
         num_workers=config.training.NUM_WORKERS,
-        pin_memory=True if torch.cuda.is_available() else False
+        pin_memory=True,
+        drop_last=True  # Drop incomplete batches
     )
     
     val_loader = DataLoader(
@@ -167,11 +168,7 @@ def create_dataloaders(config: Config, image_preprocessor, measurement_preproces
         batch_size=config.training.BATCH_SIZE,
         shuffle=False,
         num_workers=config.training.NUM_WORKERS,
-        pin_memory=True if torch.cuda.is_available() else False
+        pin_memory=True
     )
-    
-    print(f"✓ Created dataloaders")
-    print(f"  Train batches: {len(train_loader)}")
-    print(f"  Val batches: {len(val_loader)}")
     
     return train_loader, val_loader

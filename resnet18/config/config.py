@@ -159,17 +159,17 @@ class TrainingConfig:
     
     TRAIN_RATIO: float = 0.8
     VAL_RATIO: float = 0.2
-    RANDOM_SEED: int = 42
+    RANDOM_SEED: int = 60
     STRATIFY_BY: str = "gender"
     
-    BATCH_SIZE: int = 32
+    BATCH_SIZE: int = 24
     NUM_WORKERS: int = 0
     
-    USE_AUGMENTATION: bool = False
+    USE_AUGMENTATION: bool = True
     AUGMENTATION_PROBABILITY: float = 0.3
     
-    INITIAL_LR: float = 1e-4
-    WEIGHT_DECAY: float = 1e-3
+    INITIAL_LR: float = 5e-5
+    WEIGHT_DECAY: float = 1e-5
     MAX_EPOCHS: int = 100
     
     EARLY_STOP_PATIENCE: int = 20

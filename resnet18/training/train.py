@@ -481,7 +481,7 @@ def main():
     # trainer.train(num_epochs=config.training.MAX_EPOCHS)
     
     # ===== Resume from checkpoint =====
-    trainer = Trainer(config, resume_from='checkpoints_resnet18/ best_epoch18_valloss0.1222_20260109_083616.pth')
+    trainer = Trainer(config, resume_from='checkpoints_resnet18/best_epoch18_valloss0.1222_20260109_083616.pth')
     trainer.train(num_epochs=50)
 
 

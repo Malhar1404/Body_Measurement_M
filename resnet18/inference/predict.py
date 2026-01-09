@@ -665,7 +665,7 @@ def main():
     # ===== MANUAL MODEL PATH SELECTION =====
     
     # Option 1: Specify exact checkpoint path
-    CHECKPOINT_PATH = 'checkpoints_resnet18/best_hip_epoch15_hipmae2.3cm.pth'
+    CHECKPOINT_PATH = 'checkpoints_resnet18/best_epoch18_valloss0.1222_20260109_083616.pth'
     
     # Option 2: Use best loss model
     # CHECKPOINT_PATH = 'checkpoints_resnet18/best_loss_epoch10_valloss0.8545.pth'

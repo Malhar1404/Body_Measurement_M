@@ -162,7 +162,7 @@ class HipBustPredictor:
         
         print(f"🔮 Predicting for {len(data)} samples...")
         
-        base_dir = self.config.paths.BASE_DIR / 'data'
+        base_dir = self.config.paths.DATA_DIR
         
         for idx, row in tqdm(data.iterrows(), total=len(data), desc="Predicting"):
             photo_id = row.get('photo_id', row.get('image_id', idx))

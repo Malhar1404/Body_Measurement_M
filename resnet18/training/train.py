@@ -940,12 +940,12 @@ def main():
     print(config)
     
     # Train from scratch
-    trainer = Trainer(config)
-    trainer.train(num_epochs=config.training.MAX_EPOCHS)
+    # trainer = Trainer(config)
+    # trainer.train(num_epochs=config.training.MAX_EPOCHS)
     
     # To resume from checkpoint:
-    # trainer = Trainer(config, resume_from='checkpoints_resnet18/best_wing_epoch10.pth')
-    # trainer.train(num_epochs=50)
+    trainer = Trainer(config, resume_from='checkpoints_resnet18/best_epoch18_valloss0.1222_20260109_083616.pth')
+    trainer.train(num_epochs=50)
 
 
 if __name__ == "__main__":

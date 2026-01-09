@@ -585,7 +585,8 @@ class Trainer:
         
         # ===== CRITICAL FIX: Set initial_lr for OneCycleLR =====
         for group in self.optimizer.param_groups:
-            group['initial_lr'] = config.training.INITIAL_LR
+            group.setdefault('initial_lr', config.training.INITIAL_LR)
+            group.setdefault('base_lr', config.training.INITIAL_LR)
         
         # ===== OneCycleLR Scheduler =====
         print("\n📈 Setting up OneCycleLR scheduler...")

@@ -518,10 +518,11 @@ class Trainer:
     """
     Complete trainer for hip and bust prediction.
     
-    NEW FEATURES:
+    FEATURES:
     - OneCycleLR scheduler for faster training
     - Wing Loss for better accuracy
     - Per-batch LR stepping
+    - Proper checkpoint resume
     """
     
     def __init__(self, config: Config, resume_from: str = None):
@@ -563,7 +564,7 @@ class Trainer:
         # Print parameter info
         self._print_parameter_info()
         
-        # ===== NEW: Wing Loss =====
+        # ===== Wing Loss =====
         print("\n🎯 Setting up loss function...")
         # Option 1: Pure Wing Loss (recommended)
         self.criterion = WingLoss(omega=10.0, epsilon=2.0)
@@ -571,18 +572,22 @@ class Trainer:
         # Option 2: Combined loss (more robust)
         # self.criterion = HipBustLoss(wing_weight=0.7, smooth_weight=0.3)
         
-        # Option 3: Use factory
-        # self.criterion = create_loss("wing", omega=10.0, epsilon=2.0)
+        # Option 3: Per-measurement weighting
+        # self.criterion = PerMeasurementWingLoss(hip_weight=1.2, bust_weight=1.0)
         
         # Optimizer
         print("\n⚙️ Setting up optimizer...")
         self.optimizer = optim.Adam(
             self.model.parameters(),
-            lr=config.training.INITIAL_LR,  # Initial LR (will be managed by OneCycleLR)
+            lr=config.training.INITIAL_LR,
             weight_decay=config.training.WEIGHT_DECAY
         )
         
-        # ===== NEW: OneCycleLR Scheduler =====
+        # ===== CRITICAL FIX: Set initial_lr for OneCycleLR =====
+        for group in self.optimizer.param_groups:
+            group['initial_lr'] = config.training.INITIAL_LR
+        
+        # ===== OneCycleLR Scheduler =====
         print("\n📈 Setting up OneCycleLR scheduler...")
         self.scheduler = optim.lr_scheduler.OneCycleLR(
             self.optimizer,
@@ -596,6 +601,7 @@ class Trainer:
             verbose=False
         )
         
+        print(f"  Initial LR: {config.training.INITIAL_LR:.2e}")
         print(f"  Start LR: {3e-4 / 25.0:.2e}")
         print(f"  Max LR: {3e-4:.2e}")
         print(f"  Final LR: {3e-4 / 10000.0:.2e}")
@@ -680,7 +686,7 @@ class Trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
             
-            # ===== NEW: Step scheduler after each batch =====
+            # ===== Step scheduler after each batch =====
             self.scheduler.step()
             current_lr = self.optimizer.param_groups[0]['lr']
             lrs.append(current_lr)
@@ -790,15 +796,19 @@ class Trainer:
         return epoch_loss, epoch_mae, hip_mae, bust_mae, all_outputs, all_targets
     
     def save_checkpoint(self, epoch, val_loss, is_best=False):
-        """Save model checkpoint."""
+        """Save model checkpoint with complete training state."""
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),  # ← Saves LR schedule
             'best_val_loss': self.best_val_loss,
-            'global_step': self.global_step,
-            'config': self.config
+            'global_step': self.global_step,  # ← Critical for OneCycleLR
+            'config': self.config,
+            
+            # Extra metadata for debugging
+            'current_lr': self.optimizer.param_groups[0]['lr'],
+            'scheduler_last_lr': self.scheduler.get_last_lr()[0],
         }
         
         # Save last checkpoint
@@ -806,32 +816,95 @@ class Trainer:
         
         # Save best checkpoint
         if is_best:
-            filename = f"best_wing_epoch{epoch}_valloss{val_loss:.4f}_{time.strftime('%Y%m%d_%H%M%S')}.pth"
+            filename = f"best_wing_epoch{epoch}_valloss{val_loss:.4f}.pth"
             torch.save(checkpoint, self.checkpoint_dir / filename)
             print(f"🏆 Saved best model: {filename}")
+            print(f"   LR at save: {checkpoint['current_lr']:.6e}")
     
     def load_checkpoint(self, checkpoint_path: str):
-        """Load checkpoint and resume training."""
+        """
+        Load checkpoint and resume training with proper LR restoration.
+        
+        OneCycleLR is step-based, so we restore:
+        1. Optimizer state (contains current LR)
+        2. Scheduler state (contains step count and schedule position)
+        3. Global step counter (for accurate resumption)
+        """
         print(f"\n📂 Loading checkpoint: {checkpoint_path}")
         
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
         
-        # Load model state
+        # Load model weights
         self.model.load_state_dict(checkpoint['model_state_dict'])
+        print("✓ Model weights restored")
         
-        # Load optimizer state
+        # Load optimizer state (includes current LR for each param group)
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        print("✓ Optimizer state restored")
         
-        # Load scheduler state
-        self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        # ===== CRITICAL: Load scheduler state =====
+        # This restores the exact position in the OneCycleLR schedule
+        if 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print("✓ Scheduler state restored")
+            
+            # Verify scheduler was restored correctly
+            scheduler_step = self.scheduler.last_epoch
+            print(f"  └─ Scheduler at step: {scheduler_step}")
+        else:
+            print("⚠️  WARNING: No scheduler state in checkpoint!")
+            print("   LR schedule will restart from beginning")
         
-        # Load training state
+        # Load training metadata
         self.start_epoch = checkpoint['epoch'] + 1
         self.best_val_loss = checkpoint.get('best_val_loss', float('inf'))
         self.global_step = checkpoint.get('global_step', 0)
         
-        print(f"✓ Resumed from epoch {checkpoint['epoch']}")
-        print(f"✓ Best val loss: {self.best_val_loss:.4f}")
+        # ===== Display restored state =====
+        current_lr = self.optimizer.param_groups[0]['lr']
+        scheduler_lr = self.scheduler.get_last_lr()[0]
+        
+        print(f"\n📊 Resumed Training State:")
+        print(f"  Epoch:          {checkpoint['epoch']} → {self.start_epoch}")
+        print(f"  Best val loss:  {self.best_val_loss:.4f}")
+        print(f"  Global step:    {self.global_step:,}")
+        print(f"  Current LR:     {current_lr:.6e}")
+        print(f"  Scheduler LR:   {scheduler_lr:.6e}")
+        
+        # Sanity check: LRs should match
+        if abs(current_lr - scheduler_lr) > 1e-10:
+            print(f"  ⚠️  WARNING: LR mismatch detected!")
+            print(f"     Optimizer LR: {current_lr:.6e}")
+            print(f"     Scheduler LR: {scheduler_lr:.6e}")
+    
+    def verify_resume(self, checkpoint_path: str):
+        """Test that resume restores state correctly."""
+        print("\n🔍 Verifying checkpoint resume...")
+        
+        # Load checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # Compare saved vs current state
+        saved_lr = checkpoint.get('current_lr', 'N/A')
+        saved_step = checkpoint.get('global_step', 'N/A')
+        saved_epoch = checkpoint['epoch']
+        
+        # After loading in __init__
+        current_lr = self.optimizer.param_groups[0]['lr']
+        current_step = self.global_step
+        current_epoch = self.start_epoch - 1
+        
+        print(f"\n📋 Checkpoint Comparison:")
+        print(f"  {'Metric':<20} {'Saved':<15} {'Loaded':<15} {'Match':<10}")
+        print(f"  {'-'*60}")
+        print(f"  {'Epoch':<20} {saved_epoch:<15} {current_epoch:<15} {'✅' if saved_epoch == current_epoch else '❌'}")
+        print(f"  {'Global Step':<20} {saved_step:<15} {current_step:<15} {'✅' if saved_step == current_step else '❌'}")
+        
+        if saved_lr != 'N/A':
+            lr_match = abs(float(saved_lr) - current_lr) < 1e-10
+            print(f"  {'Learning Rate':<20} {saved_lr:<15.6e} {current_lr:<15.6e} {'✅' if lr_match else '❌'}")
+        
+        print(f"  {'-'*60}\n")
     
     def train(self, num_epochs):
         """Main training loop."""
@@ -930,7 +1003,6 @@ class Trainer:
         print("="*80 + "\n")
         
         self.writer.close()
-
 
 def main():
     """Main training function."""

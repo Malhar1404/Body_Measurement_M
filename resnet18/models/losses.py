@@ -1,10 +1,11 @@
 """
 losses.py - Loss Functions for Hip & Bust Prediction
 
-Now includes:
+Includes:
 - Wing Loss (best for body measurements)
 - Smooth L1 Loss
 - Combined losses
+- Per-measurement weighted losses
 """
 
 import torch
@@ -13,9 +14,7 @@ import numpy as np
 
 
 class WeightedMSELoss(nn.Module):
-    """
-    MSE loss with per-measurement weights.
-    """
+    """MSE loss with per-measurement weights."""
     
     def __init__(self, hip_weight: float = 1.0, bust_weight: float = 1.0):
         super().__init__()
@@ -23,20 +22,13 @@ class WeightedMSELoss(nn.Module):
         print(f"✓ WeightedMSELoss: hip={hip_weight}, bust={bust_weight}")
     
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            pred: (B, 2)
-            target: (B, 2)
-        """
         errors = (pred - target) ** 2
         weighted_errors = errors * self.weights.to(pred.device)
         return weighted_errors.mean()
 
 
 class AdaptiveLoss(nn.Module):
-    """
-    Combination of MSE and MAE (more robust to outliers).
-    """
+    """Combination of MSE and MAE (more robust to outliers)."""
     
     def __init__(self, alpha: float = 0.7):
         super().__init__()
@@ -53,9 +45,7 @@ class AdaptiveLoss(nn.Module):
 class SmoothL1Loss(nn.Module):
     """
     Smooth L1 Loss (Huber Loss variant)
-    
     Less sensitive to outliers than MSE.
-    Used in Faster R-CNN and body measurement papers.
     """
     
     def __init__(self, beta: float = 1.0):
@@ -64,23 +54,12 @@ class SmoothL1Loss(nn.Module):
         print(f"✓ SmoothL1Loss: beta={beta}")
     
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            pred: (B, 2) predictions
-            target: (B, 2) ground truth
-        """
         diff = torch.abs(pred - target)
-        
-        # Smooth L1 formula:
-        # loss = 0.5 * (diff^2) / beta   if diff < beta
-        # loss = diff - 0.5 * beta       if diff >= beta
-        
         loss = torch.where(
             diff < self.beta,
             0.5 * (diff ** 2) / self.beta,
             diff - 0.5 * self.beta
         )
-        
         return loss.mean()
 
 
@@ -97,8 +76,8 @@ class WingLoss(nn.Module):
     https://arxiv.org/abs/1711.06753
     
     Parameters:
-        omega: Threshold for switching between linear and non-linear parts
-        epsilon: Controls the curvature of the non-linear region
+        omega: Threshold for switching between linear and non-linear parts (default: 10.0)
+        epsilon: Controls the curvature of the non-linear region (default: 2.0)
     """
     
     def __init__(self, omega: float = 10.0, epsilon: float = 2.0):
@@ -123,7 +102,6 @@ class WingLoss(nn.Module):
         # Wing loss formula:
         # For small errors (< omega): logarithmic (amplifies attention)
         # For large errors (>= omega): linear (less penalty than MSE)
-        
         loss = torch.where(
             diff < self.omega,
             self.omega * torch.log(1 + diff / self.epsilon),
@@ -137,11 +115,6 @@ class HipBustLoss(nn.Module):
     """
     Custom loss combining Wing Loss + Smooth L1
     Optimized specifically for hip and bust prediction
-    
-    - Wing Loss: Focuses on small errors (precision)
-    - Smooth L1: Handles large outliers gracefully
-    
-    Best of both worlds!
     """
     
     def __init__(
@@ -164,17 +137,12 @@ class HipBustLoss(nn.Module):
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         wing_loss = self.wing(pred, target)
         smooth_loss = self.smooth(pred, target)
-        
         combined = self.wing_weight * wing_loss + self.smooth_weight * smooth_loss
-        
         return combined
 
 
 class PerMeasurementWingLoss(nn.Module):
-    """
-    Wing Loss with different weights for hip and bust
-    Use if one measurement is more important than the other
-    """
+    """Wing Loss with different weights for hip and bust."""
     
     def __init__(
         self, 
@@ -204,17 +172,15 @@ class PerMeasurementWingLoss(nn.Module):
         
         # Apply per-measurement weights
         weighted_loss = loss * self.weights.to(pred.device)
-        
         return weighted_loss.mean()
 
 
-# Factory function for easy loss selection
 def create_loss(loss_type: str = "wing", **kwargs):
     """
     Factory function to create loss functions
     
     Args:
-        loss_type: One of ["mse", "mae", "smooth_l1", "wing", "hip_bust", "per_measurement_wing"]
+        loss_type: One of ["mse", "adaptive", "smooth_l1", "wing", "hip_bust", "per_measurement_wing"]
         **kwargs: Loss-specific parameters
     
     Returns:
